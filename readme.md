@@ -1,44 +1,44 @@
-# MotionGrid Architect v1.2
+# MotionGrid Architect v1.0
 
-Applicazione web interattiva che usa **webcam + MediaPipe Hands** per disegnare e manipolare una griglia di quadrati in tempo reale con i gesti della mano.
+Interactive web application that uses **webcam + MediaPipe Hands** to draw and manipulate a grid of squares in real-time with hand gestures.
 
-## Cosa fa il programma
+## What the program does
 
-- Mostra il feed della webcam come sfondo.
-- Riconosce fino a **2 mani** contemporaneamente.
-- Visualizza uno scheletro della mano con stile "cyber" migliorato con gradienti e glow animati.
-- Disegna una griglia (mesh) luminosa sovrapposta.
-- Permette di creare, spostare e cancellare quadrati della griglia usando gesti.
-- I quadrati attivi hanno effetti visivi migliorati con glow pulsante e angoli evidenziati.
-- Mostra indicatori circolari di caricamento quando un gesto richiede una pressione prolungata.
+- Shows the webcam feed as the background.
+- Recognizes up to **2 hands** simultaneously.
+- Displays a hand skeleton with an enhanced "cyber" style, improved with gradients and animated glows.
+- Draws an overlaid luminous grid (mesh).
+- Allows creating, moving, and deleting grid squares using gestures.
+- Active squares have improved visual effects with pulsing glow and highlighted corners.
+- Shows circular loading indicators when a gesture requires a long press.
 
-## Gesti da usare
+## Gestures to use
 
-I gesti sono riconosciuti in base alle dita rilevate da MediaPipe.
+Gestures are recognized based on the fingers detected by MediaPipe.
 
-1. **Pinch (presa pollice + indice)**
-- Azione: aggiunge subito un quadrato nella cella della griglia sotto il dito indice.
+1. **Pinch (thumb + index grip)**
+- Action: immediately adds a square in the grid cell under the index finger.
 
-2. **Pinch mantenuto (~1 secondo)**
-- Azione: attiva la modalita disegno continuo.
-- Risultato: mentre tieni il pinch, vengono aggiunti quadrati lungo il movimento del dito.
-- Feedback visivo: anello di caricamento azzurro.
+2. **Maintained Pinch (~1 second)**
+- Action: activates continuous drawing mode.
+- Result: while holding the pinch, squares are added along the movement of the finger.
+- Visual feedback: light blue loading ring.
 
-3. **Pugno (fist)**
-- Azione: sposta in blocco tutti i quadrati gia creati.
-- Risultato: i quadrati si muovono a "scatti" di cella seguendo lo spostamento del palmo.
+3. **Fist**
+- Action: moves all previously created squares as a block.
+- Result: squares move in cell "steps" following the movement of the palm.
 
-4. **Cancellazione (combo a 2 mani)**
-- Gesto richiesto: una mano in **pugno** + l'altra in **pinch** mantenuti insieme per ~1.2 secondi.
-- Dopo l'attivazione: passa con il dito pinch sui quadrati per eliminarli.
-- Feedback visivo: anello rosso durante il caricamento e stato UI rosso in modalita cancellazione.
+4. **Deletion (2-hand combo)**
+- Required gesture: one hand in a **fist** + the other in a **pinch** held together for ~1.2 seconds.
+- After activation: move the pinch finger over squares to delete them.
+- Visual feedback: red ring during loading and red UI state in deletion mode.
 
-## Interfaccia
+## Interface
 
-- **Nascondi/Mostra griglia**: alterna la visibilita della mesh luminosa.
-- **Cancella quadrati**: mostra un promemoria sul gesto corretto di cancellazione (non elimina direttamente tutti i quadrati).
+- **Hide/Show grid**: toggles the visibility of the luminous mesh.
+- **Clear squares**: shows a reminder of the correct deletion gesture (does not directly delete all squares).
 
-## Requisiti
+## Requirements
 
-- Browser moderno con supporto `getUserMedia`.
-- Connessione Internet per caricare le librerie MediaPipe da CDN.
+- Modern browser with `getUserMedia` support.
+- Internet connection to load MediaPipe libraries from CDN.
