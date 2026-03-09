@@ -78,8 +78,8 @@
             <div>INFO: <span id="status" style="color:#00ff00">Waiting for camera...</span></div>
             <div>Status: <span id="dev_info" style="color:#ff00ff">Ready</span></div>
             <div>Discord Dev Info: <span id="dev_info2" style="color:#00ff00">"portgabriel_"</span><button class="copy_btn" onclick="copyDiscordNick()"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="4" width="8" height="8"/><rect x="5" y="1" width="8" height="8"/></svg></button></div>
-            <button id="toggle_grid" type="button">Nascondi griglia</button>
-            <button id="clear_squares" type="button">Cancella quadrati</button>
+            <button id="toggle_grid" type="button">Hide grid</button>
+            <button id="clear_squares" type="button">Clear squares</button>
         </div>
     </div>
 
@@ -222,7 +222,7 @@
          * Update grid toggle button label
          */
         function updateGridButtonLabel() {
-            toggleGridBtn.textContent = showGrid ? 'Nascondi griglia' : 'Mostra griglia';
+            toggleGridBtn.textContent = showGrid ? 'Hide grid' : 'Show grid';
         }
 
         /**
@@ -233,14 +233,14 @@
             navigator.clipboard.writeText(nick).then(() => {
                 const btn = event.target;
                 const originalText = btn.textContent;
-                btn.textContent = '✓ Copiato';
+                btn.textContent = '✓ Copied';
                 btn.style.color = '#00ff00';
                 setTimeout(() => {
                     btn.textContent = originalText;
                     btn.style.color = '#00f0ff';
                 }, 2000);
             }).catch(err => {
-                console.error('Errore nella copia:', err);
+                console.error('Copy error:', err);
             });
         }
 
@@ -737,10 +737,10 @@
 
                         if (deleteModeActive) {
                             removeSquareFromGrid(pinchHand.fingerX, pinchHand.fingerY);
-                            setStatus('Modalita cancellazione: passa sopra i quadretti', '#ff4b4b');
+                            setStatus('Deletion mode: hover over squares', '#ff4b4b');
                         }
                     } else {
-                        setStatus('Caricamento cancellazione: pugno + pinch', '#ff8080');
+                        setStatus('Deletion loading: fist + pinch', '#ff8080');
                     }
 
                     // While deletion combo is active, ignore draw/move state to avoid accidental edits.
@@ -903,7 +903,7 @@
         clearSquaresBtn.addEventListener('click', () => {
             gridSquares = [];
             gridSquareKeys.clear();
-            setStatus('Tutti i quadrati sono stati cancellati', '#00ff00');
+            setStatus('All squares have been cleared', '#00ff00');
         });
 
         // Initialize application
