@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MotionGrid Architect v1.2</title>
+    
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+        #input_video { position: absolute; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 1; }
+        #liquify_canvas { position: absolute; top: 0; left: 0; z-index: 5; pointer-events: none; }
+        #bio_canvas { position: absolute; width: 100vw; height: 100vh; z-index: 10; transform: scaleX(-1); pointer-events: none; }
+        #ui { 
+            position: absolute; top: 20px; left: 20px; z-index: 100;
+            color: #00f0ff; font-weight: bold; font-size: 14px;
+            text-shadow: 0 0 10px #00f0ff; border-left: 3px solid #00f0ff; padding-left: 15px;
+            background: rgba(0,0,0,0.7); padding: 15px; pointer-events: auto;
+        }
+        #toggle_grid {
+            margin-top: 10px;
+            background: transparent;
+            color: #00f0ff;
+            border: 1px solid #00f0ff;
+            padding: 6px 10px;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        #toggle_grid:hover {
+            background: rgba(0, 240, 255, 0.12);
+        }
+        #clear_squares {
+            margin-top: 5px;
+            background: transparent;
+            color: #00f0ff;
+            border: 1px solid #00f0ff;
+            padding: 6px 10px;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        #clear_squares:hover {
+            background: rgba(0, 240, 255, 0.12);
+        }
+        .copy_btn {
+            background: transparent;
+            color: #00f0ff;
+            border: 1px solid #00f0ff;
+            padding: 2px 6px;
+            margin-left: 5px;
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+            border-radius: 2px;
+            transition: all 0.2s ease;
+            vertical-align: middle;
+        }
+        .copy_btn:hover {
+            background: rgba(0, 240, 255, 0.12);
+            box-shadow: 0 0 5px rgba(0, 240, 255, 0.5);
+        }
+        .copy_btn:active {
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div>MotionGrid Architect v1.2</div>
+        <div>INFO: <span id="status" style="color:#00ff00">Waiting for camera...</span></div>
+        <div>Status: <span id="dev_info" style="color:#ff00ff">Ready</span></div>
+        <div>Discord Dev Info: <span id="dev_info2" style="color:#00ff00">"portgabriel_"</span><button class="copy_btn" onclick="copyDiscordNick()"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="4" width="8" height="8"/><rect x="5" y="1" width="8" height="8"/></svg></button></div>
+        <button id="toggle_grid" type="button">Nascondi griglia</button>
+        <button id="clear_squares" type="button">Cancella quadrati</button>
+    </div>
+
+    <video id="input_video" autoplay playsinline></video>
+    <canvas id="liquify_canvas"></canvas>
+    <canvas id="bio_canvas"></canvas>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const bioCanvas = document.getElementById('bio_canvas');
+        const bioCtx = bioCanvas.getContext('2d');
+        const liquifyCanvas = document.getElementById('liquify_canvas');
+        const lqCtx = liquifyCanvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const toggleGridBtn = document.getElementById('toggle_grid');
+        const clearSquaresBtn = document.getElementById('clear_squares');
+
+        // Grid configuration
+        const rows = 15, cols = 22;
+        let meshPoints = [];
+        let showGrid = true;
+
+        // Hand tracking state
+        let smoothedHands = [];
+        const SMOOTH_FACTOR = 0.45;
+        
+        // Grid squares management
+        let gridSquares = [];
+        
+        // Particle system
+        let particles = [];
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 2;
+                this.vy = (Math.random() - 0.5) * 2;
+                this.life = 1.0;
+                this.decay = 0.015 + Math.random() * 0.015;
+                this.size = 2 + Math.random() * 3;
+                this.hue = 180 + Math.random() * 20;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= this.decay;
+                this.vy += 0.05; // gravity
+            }
+            
+            draw(ctx) {
+                if (this.life <= 0) return;
+                ctx.save();
+                const alpha = this.life * 0.6;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = `hsl(${this.hue}, 100%, 60%)`;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = `hsl(${this.hue}, 100%, 60%)`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+            
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+        
+        // Gesture state for each hand (max 2 hands)
+        let wasPinching = [false, false];
+        let pinchStartTime = [null, null];
+        let isDrawingMode = [false, false];
+        let lastFistCenter = [null, null];
+        let fistMoveResidual = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+        let smoothedFistCenter = [null, null];
+        
+        // Deletion mode state
+        let deleteComboStartTime = null;
+        let deleteComboTriggered = false;
+        let deleteModeActive = false;
+        
+        // Gesture thresholds and timing
+        const PINCH_THRESHOLD = 0.05;
+        const HOLD_DURATION = 1000;
+        const DELETE_HOLD_DURATION = 1200;
+        const FIST_SMOOTH_FACTOR = 0.35;
+        const FIST_DEADZONE_PX = 2;
+        
+        // Mesh physics constants
+        const MESH_SPRING_STRENGTH = 0.12;
+        const MESH_DAMPING = 0.82;
+        
+        // Rendering constants
+        const BASE_GRID_OPACITY = 0.22;
+        const MAX_GRID_OPACITY = 0.9;
+        const GLITCH_MULTIPLIER = 0.04;
+
+        /**
+         * Update status message in UI
+         */
+        function setStatus(message, color = '#00ff00') {
+            statusEl.textContent = message;
+            statusEl.style.color = color;
+        }
+
+        /**
+         * Update grid toggle button label
+         */
+        function updateGridButtonLabel() {
+            toggleGridBtn.textContent = showGrid ? 'Nascondi griglia' : 'Mostra griglia';
+        }
+
+        /**
+         * Copy Discord nick to clipboard
+         */
+        function copyDiscordNick() {
+            const nick = document.getElementById('dev_info2').textContent.replace(/"/g, '');
+            navigator.clipboard.writeText(nick).then(() => {
+                const btn = event.target;
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copiato';
+                btn.style.color = '#00ff00';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.color = '#00f0ff';
+                }, 2000);
+            }).catch(err => {
+                console.error('Errore nella copia:', err);
+            });
+        }
+
+        /**
+         * Initialize liquify mesh grid
+         */
+        function initMesh() {
+            meshPoints = [];
+            liquifyCanvas.width = window.innerWidth;
+            liquifyCanvas.height = window.innerHeight;
+            const spacingX = liquifyCanvas.width / cols;
+            const spacingY = liquifyCanvas.height / rows;
+            for (let y = 0; y <= rows; y++) {
+                for (let x = 0; x <= cols; x++) {
+                    meshPoints.push({ 
+                        x: x * spacingX, 
+                        y: y * spacingY, 
+                        origX: x * spacingX, 
+                        origY: y * spacingY, 
+                        vx: 0, 
+                        vy: 0 
+                    });
+                }
+            }
+        }
+
+        /**
+         * Detect pinch gesture (thumb tip + index tip close together)
+         */
+        function detectPinch(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const dist = Math.hypot(
+                thumbTip.x - indexTip.x,
+                thumbTip.y - indexTip.y
+            );
+            return dist < PINCH_THRESHOLD;
+        }
+
+        /**
+         * Detect fist gesture (all fingertips close to wrist)
+         */
+        function detectFist(landmarks) {
+            const wrist = landmarks[0];
+            const fingertipIds = [8, 12, 16, 20];
+            const avgTipDistToWrist = fingertipIds.reduce((sum, id) => {
+                const tip = landmarks[id];
+                return sum + Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+            }, 0) / fingertipIds.length;
+
+            // Folded fingers keep fingertips close to wrist in normalized hand space
+            return avgTipDistToWrist < 0.18;
+        }
+
+        /**
+         * Convert screen coordinates to grid cell
+         */
+        function getGridCell(x, y) {
+            const spacingX = liquifyCanvas.width / cols;
+            const spacingY = liquifyCanvas.height / rows;
+            const col = Math.floor(x / spacingX);
+            const row = Math.floor(y / spacingY);
+            return { 
+                row: Math.max(0, Math.min(rows - 1, row)), 
+                col: Math.max(0, Math.min(cols - 1, col)) 
+            };
+        }
+
+        /**
+         * Add a square to the grid at given coordinates
+         */
+        function addSquareToGrid(x, y) {
+            const cell = getGridCell(x, y);
+            const exists = gridSquares.some(sq => sq.row === cell.row && sq.col === cell.col);
+            if (!exists) {
+                gridSquares.push(cell);
+            }
+        }
+
+        /**
+         * Remove a square from the grid at given coordinates
+         */
+        function removeSquareFromGrid(x, y) {
+            const cell = getGridCell(x, y);
+            gridSquares = gridSquares.filter(sq => !(sq.row === cell.row && sq.col === cell.col));
+        }
+
+        /**
+         * Render all active grid squares with glow effect
+         */
+        function drawGridSquares() {
+            const spacingX = liquifyCanvas.width / cols;
+            const spacingY = liquifyCanvas.height / rows;
+            const time = Date.now() * 0.001;
+            
+            gridSquares.forEach((sq, idx) => {
+                const x = sq.col * spacingX;
+                const y = sq.row * spacingY;
+                
+                // Animated glow with wave effect
+                const wave = Math.sin(time * 2 + idx * 0.3) * 0.5 + 0.5;
+                const glowIntensity = 15 + wave * 10;
+                
+                // Outer glow
+                lqCtx.save();
+                lqCtx.shadowBlur = glowIntensity * 2;
+                lqCtx.shadowColor = '#00f0ff';
+                lqCtx.fillStyle = `rgba(0, 240, 255, ${0.15 + wave * 0.1})`;
+                lqCtx.fillRect(x, y, spacingX, spacingY);
+                lqCtx.restore();
+                
+                // Border with gradient
+                lqCtx.save();
+                const gradient = lqCtx.createLinearGradient(x, y, x + spacingX, y + spacingY);
+                gradient.addColorStop(0, `rgba(0, 240, 255, ${0.6 + wave * 0.3})`);
+                gradient.addColorStop(0.5, `rgba(0, 212, 255, ${0.8 + wave * 0.2})`);
+                gradient.addColorStop(1, `rgba(0, 240, 255, ${0.6 + wave * 0.3})`);
+                lqCtx.strokeStyle = gradient;
+                lqCtx.lineWidth = 2.5;
+                lqCtx.shadowBlur = glowIntensity;
+                lqCtx.shadowColor = '#00f0ff';
+                lqCtx.strokeRect(x, y, spacingX, spacingY);
+                lqCtx.restore();
+                
+                // Corner highlights
+                lqCtx.save();
+                lqCtx.fillStyle = `rgba(0, 255, 255, ${0.6 + wave * 0.4})`;
+                lqCtx.shadowBlur = 8;
+                lqCtx.shadowColor = '#00ffff';
+                const cornerSize = 4;
+                lqCtx.fillRect(x - 1, y - 1, cornerSize, cornerSize);
+                lqCtx.fillRect(x + spacingX - cornerSize + 1, y - 1, cornerSize, cornerSize);
+                lqCtx.fillRect(x - 1, y + spacingY - cornerSize + 1, cornerSize, cornerSize);
+                lqCtx.fillRect(x + spacingX - cornerSize + 1, y + spacingY - cornerSize + 1, cornerSize, cornerSize);
+                lqCtx.restore();
+                
+                // Spawn occasional particles on active squares
+                if (Math.random() < 0.03) {
+                    const px = x + spacingX * Math.random();
+                    const py = y + spacingY * Math.random();
+                    particles.push(new Particle(px, py));
+                }
+            });
+        }
+
+        function moveAllSquaresBy(deltaX, deltaY, handIndex) {
+            if (!gridSquares.length) return;
+
+            const spacingX = liquifyCanvas.width / cols;
+            const spacingY = liquifyCanvas.height / rows;
+            fistMoveResidual[handIndex].x += deltaX;
+            fistMoveResidual[handIndex].y += deltaY;
+
+            const deltaCols = fistMoveResidual[handIndex].x >= 0
+                ? Math.floor(fistMoveResidual[handIndex].x / spacingX)
+                : Math.ceil(fistMoveResidual[handIndex].x / spacingX);
+            const deltaRows = fistMoveResidual[handIndex].y >= 0
+                ? Math.floor(fistMoveResidual[handIndex].y / spacingY)
+                : Math.ceil(fistMoveResidual[handIndex].y / spacingY);
+
+            if (deltaCols === 0 && deltaRows === 0) return;
+
+            fistMoveResidual[handIndex].x -= deltaCols * spacingX;
+            fistMoveResidual[handIndex].y -= deltaRows * spacingY;
+
+            const moved = [];
+            const seen = new Set();
+
+            gridSquares.forEach(sq => {
+                const nextRow = Math.max(0, Math.min(rows - 1, sq.row + deltaRows));
+                const nextCol = Math.max(0, Math.min(cols - 1, sq.col + deltaCols));
+                const key = `${nextRow}:${nextCol}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    moved.push({ row: nextRow, col: nextCol });
+                }
+            });
+
+            gridSquares = moved;
+        }
+
+        /**
+         * Draw circular loading indicator for gesture hold
+         */
+        function drawLoadingIndicator(x, y, progress, color = 'rgba(0, 240, 255, 0.9)', shadowColor = '#00f0ff') {
+            lqCtx.save();
+            lqCtx.strokeStyle = color;
+            lqCtx.lineWidth = 4;
+            lqCtx.shadowBlur = 15;
+            lqCtx.shadowColor = shadowColor;
+            
+            const radius = 30;
+            const startAngle = -Math.PI / 2;
+            const endAngle = startAngle + (Math.PI * 2 * progress);
+            
+            lqCtx.beginPath();
+            lqCtx.arc(x, y, radius, startAngle, endAngle, false);
+            lqCtx.stroke();
+            
+            // Background circle
+            const bgColor = color.replace('0.9)', '0.2)');
+            lqCtx.strokeStyle = bgColor;
+            lqCtx.lineWidth = 2;
+            lqCtx.beginPath();
+            lqCtx.arc(x, y, radius, 0, Math.PI * 2);
+            lqCtx.stroke();
+            
+            lqCtx.restore();
+        }
+        
+        /**
+         * Draw hand skeleton with cyber aesthetic
+         */
+        function drawCyberHand(ctx, pts) {
+            const time = Date.now() * 0.003;
+            const pulse = Math.sin(time) * 0.5 + 0.5;
+            
+            // Draw connections with gradient
+            ctx.save();
+            ctx.shadowBlur = 18 + pulse * 8;
+            ctx.shadowColor = "#00f0ff";
+            ctx.lineWidth = 2.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            // Hand skeleton connections
+            const CONNECTIONS = [
+                [0,1],[1,2],[2,3],[3,4],      // Thumb
+                [0,5],[5,6],[6,7],[7,8],      // Index
+                [9,10],[10,11],[11,12],       // Middle
+                [13,14],[14,15],[15,16],      // Ring
+                [0,17],[17,18],[18,19],[19,20], // Pinky
+                [5,9],[9,13],[13,17]          // Palm
+            ];
+            
+            CONNECTIONS.forEach(([a, b]) => {
+                const gradient = ctx.createLinearGradient(
+                    pts[a].x * bioCanvas.width, 
+                    pts[a].y * bioCanvas.height,
+                    pts[b].x * bioCanvas.width, 
+                    pts[b].y * bioCanvas.height
+                );
+                gradient.addColorStop(0, `rgba(0, 240, 255, ${0.6 + pulse * 0.3})`);
+                gradient.addColorStop(0.5, `rgba(0, 255, 255, ${0.8 + pulse * 0.2})`);
+                gradient.addColorStop(1, `rgba(0, 240, 255, ${0.6 + pulse * 0.3})`);
+                ctx.strokeStyle = gradient;
+                
+                ctx.beginPath();
+                ctx.moveTo(pts[a].x * bioCanvas.width, pts[a].y * bioCanvas.height);
+                ctx.lineTo(pts[b].x * bioCanvas.width, pts[b].y * bioCanvas.height);
+                ctx.stroke();
+            });
+            
+            // Draw joint points with glow
+            ctx.shadowBlur = 12;
+            const fingertips = [4, 8, 12, 16, 20];
+            pts.forEach((pt, idx) => {
+                const isFingertip = fingertips.includes(idx);
+                const radius = isFingertip ? 5 : 3;
+                const alpha = isFingertip ? 0.9 : 0.7;
+                
+                ctx.fillStyle = `rgba(0, 255, 255, ${alpha})`;
+                ctx.shadowColor = isFingertip ? '#00ffff' : '#00f0ff';
+                ctx.beginPath();
+                ctx.arc(pt.x * bioCanvas.width, pt.y * bioCanvas.height, radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Extra glow ring for fingertips
+                if (isFingertip) {
+                    ctx.strokeStyle = `rgba(0, 255, 255, ${0.3 + pulse * 0.2})`;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(pt.x * bioCanvas.width, pt.y * bioCanvas.height, radius + 4, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            });
+            
+            ctx.restore();
+        }
+
+        /**
+         * Render liquify mesh with dynamic glow based on distortion
+         */
+        function drawMeshLayer(glitch) {
+            lqCtx.save();
+            const opacity = Math.min(MAX_GRID_OPACITY, BASE_GRID_OPACITY + glitch * GLITCH_MULTIPLIER);
+            lqCtx.lineWidth = 1.2;
+            lqCtx.shadowBlur = 12 + glitch * 2;
+
+            // Calculate center lines
+            const centerRow = Math.floor(rows / 2);
+            const centerCol = Math.floor(cols / 2);
+
+            // Draw horizontal lines
+            for (let y = 0; y <= rows; y++) {
+                // Use different color for center horizontal line (X axis)
+                if (y === centerRow) {
+                    lqCtx.strokeStyle = `rgba(255, 100, 255, ${opacity})`; // Magenta
+                    lqCtx.shadowColor = '#ff64ff';
+                    lqCtx.lineWidth = 1.8;
+                } else {
+                    lqCtx.strokeStyle = `rgba(0, 240, 255, ${opacity})`;
+                    lqCtx.shadowColor = '#00f0ff';
+                    lqCtx.lineWidth = 1.2;
+                }
+                
+                lqCtx.beginPath();
+                for (let x = 0; x <= cols; x++) {
+                    const p = meshPoints[y * (cols + 1) + x];
+                    if (x === 0) lqCtx.moveTo(p.x, p.y);
+                    else lqCtx.lineTo(p.x, p.y);
+                }
+                lqCtx.stroke();
+            }
+
+            // Draw vertical lines
+            for (let x = 0; x <= cols; x++) {
+                // Use different color for center vertical line (Y axis)
+                if (x === centerCol) {
+                    lqCtx.strokeStyle = `rgba(255, 255, 100, ${opacity})`; // Yellow
+                    lqCtx.shadowColor = '#ffff64';
+                    lqCtx.lineWidth = 1.8;
+                } else {
+                    lqCtx.strokeStyle = `rgba(0, 240, 255, ${opacity})`;
+                    lqCtx.shadowColor = '#00f0ff';
+                    lqCtx.lineWidth = 1.2;
+                }
+                
+                lqCtx.beginPath();
+                for (let y = 0; y <= rows; y++) {
+                    const p = meshPoints[y * (cols + 1) + x];
+                    if (y === 0) lqCtx.moveTo(p.x, p.y);
+                    else lqCtx.lineTo(p.x, p.y);
+                }
+                lqCtx.stroke();
+            }
+
+            lqCtx.restore();
+        }
+
+        /**
+         * Main rendering function for liquify effect
+         */
+        function renderLiquify(interactions) {
+            lqCtx.clearRect(0, 0, liquifyCanvas.width, liquifyCanvas.height);
+            
+            // Update and draw particles
+            particles = particles.filter(p => !p.isDead());
+            particles.forEach(p => {
+                p.update();
+                p.draw(lqCtx);
+            });
+            
+            drawGridSquares();
+            
+            // Draw loading indicators for hands holding pinch
+            interactions.forEach((inter, idx) => {
+                if (inter.showLoading) {
+                    const color = inter.isDeletion ? 'rgba(255, 40, 40, 0.9)' : 'rgba(0, 240, 255, 0.9)';
+                    const shadowColor = inter.isDeletion ? '#ff2828' : '#00f0ff';
+                    drawLoadingIndicator(inter.x, inter.y, inter.loadingProgress, color, shadowColor);
+                }
+            });
+            
+            // Physics simulation for mesh points
+            let totalDist = 0;
+            const meshLength = meshPoints.length;
+
+            for (let i = 0; i < meshLength; i++) {
+                const p = meshPoints[i];
+                // Spring force towards original position
+                p.vx += (p.origX - p.x) * MESH_SPRING_STRENGTH;
+                p.vy += (p.origY - p.y) * MESH_SPRING_STRENGTH;
+                // Damping
+                p.vx *= MESH_DAMPING;
+                p.vy *= MESH_DAMPING;
+                // Update position
+                p.x += p.vx;
+                p.y += p.vy;
+                // Calculate distortion for glitch effect
+                totalDist += Math.hypot(p.x - p.origX, p.y - p.origY);
+            }
+
+            const glitch = (totalDist / meshLength) * 0.5;
+            if (showGrid) drawMeshLayer(glitch);
+        }
+
+        /**
+         * Process hand tracking results from MediaPipe
+         */
+        function onResults(results) {
+            bioCtx.clearRect(0, 0, bioCanvas.width, bioCanvas.height);
+            const interactions = [];
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                setStatus('Hand tracking active');
+                const handStates = [];
+                const currentTime = Date.now();
+
+                results.multiHandLandmarks.slice(0, 2).forEach((raw, handIndex) => {
+                    if (!smoothedHands[handIndex]) smoothedHands[handIndex] = raw.map(p => ({ ...p }));
+                    else raw.forEach((p, i) => {
+                        smoothedHands[handIndex][i].x += (p.x - smoothedHands[handIndex][i].x) * SMOOTH_FACTOR;
+                        smoothedHands[handIndex][i].y += (p.y - smoothedHands[handIndex][i].y) * SMOOTH_FACTOR;
+                    });
+
+                    drawCyberHand(bioCtx, smoothedHands[handIndex]);
+                    const fingerX = (1 - smoothedHands[handIndex][8].x) * liquifyCanvas.width;
+                    const fingerY = smoothedHands[handIndex][8].y * liquifyCanvas.height;
+                    const palmX = (1 - smoothedHands[handIndex][9].x) * liquifyCanvas.width;
+                    const palmY = smoothedHands[handIndex][9].y * liquifyCanvas.height;
+
+                    const isPinching = detectPinch(smoothedHands[handIndex]);
+                    const isFist = detectFist(smoothedHands[handIndex]);
+
+                    handStates.push({ handIndex, fingerX, fingerY, palmX, palmY, isPinching, isFist });
+                });
+
+                let combo = null;
+                if (handStates.length >= 2) {
+                    for (let i = 0; i < handStates.length; i++) {
+                        for (let j = 0; j < handStates.length; j++) {
+                            if (i === j) continue;
+                            if (handStates[i].isFist && handStates[j].isPinching) {
+                                combo = { fistIndex: handStates[i].handIndex, pinchIndex: handStates[j].handIndex };
+                                break;
+                            }
+                        }
+                        if (combo) break;
+                    }
+                }
+
+                if (combo) {
+                    const pinchHand = handStates.find(h => h.handIndex === combo.pinchIndex);
+
+                    if (deleteComboStartTime === null) {
+                        deleteComboStartTime = currentTime;
+                        deleteComboTriggered = false;
+                        deleteModeActive = false;
+                    }
+
+                    const elapsed = currentTime - deleteComboStartTime;
+                    const loadingProgress = Math.min(1, elapsed / DELETE_HOLD_DURATION);
+
+                    interactions.push({
+                        x: pinchHand.fingerX,
+                        y: pinchHand.fingerY,
+                        showLoading: true,
+                        loadingProgress,
+                        isDeletion: true
+                    });
+
+                    if (elapsed >= DELETE_HOLD_DURATION) {
+                        if (!deleteComboTriggered) {
+                            deleteComboTriggered = true;
+                            deleteModeActive = true;
+                        }
+
+                        if (deleteModeActive) {
+                            removeSquareFromGrid(pinchHand.fingerX, pinchHand.fingerY);
+                            setStatus('Modalita cancellazione: passa sopra i quadretti', '#ff4b4b');
+                        }
+                    } else {
+                        setStatus('Caricamento cancellazione: pugno + pinch', '#ff8080');
+                    }
+
+                    // While deletion combo is active, ignore draw/move state to avoid accidental edits.
+                    wasPinching = [false, false];
+                    pinchStartTime = [null, null];
+                    isDrawingMode = [false, false];
+                    lastFistCenter = [null, null];
+                    smoothedFistCenter = [null, null];
+                    fistMoveResidual = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+                } else {
+                    deleteComboStartTime = null;
+                    deleteComboTriggered = false;
+                    deleteModeActive = false;
+
+                    handStates.forEach(state => {
+                        const { handIndex, fingerX, fingerY, palmX, palmY, isPinching, isFist } = state;
+
+                        // Fist gesture = Move all squares
+                        if (isFist) {
+                        if (!smoothedFistCenter[handIndex]) {
+                            smoothedFistCenter[handIndex] = { x: palmX, y: palmY };
+                        } else {
+                            smoothedFistCenter[handIndex].x += (palmX - smoothedFistCenter[handIndex].x) * FIST_SMOOTH_FACTOR;
+                            smoothedFistCenter[handIndex].y += (palmY - smoothedFistCenter[handIndex].y) * FIST_SMOOTH_FACTOR;
+                        }
+
+                        if (lastFistCenter[handIndex]) {
+                            const dx = smoothedFistCenter[handIndex].x - lastFistCenter[handIndex].x;
+                            const dy = smoothedFistCenter[handIndex].y - lastFistCenter[handIndex].y;
+                            if (Math.hypot(dx, dy) >= FIST_DEADZONE_PX) {
+                                moveAllSquaresBy(dx, dy, handIndex);
+                            }
+                        }
+                        lastFistCenter[handIndex] = {
+                            x: smoothedFistCenter[handIndex].x,
+                            y: smoothedFistCenter[handIndex].y
+                        };
+
+                        // Disable pinch state while moving selection
+                        wasPinching[handIndex] = false;
+                        pinchStartTime[handIndex] = null;
+                        isDrawingMode[handIndex] = false;
+                    }
+                    // Pinch gesture = Draw mode
+                    else if (isPinching) {
+                        lastFistCenter[handIndex] = null;
+                        smoothedFistCenter[handIndex] = null;
+                        fistMoveResidual[handIndex] = { x: 0, y: 0 };
+
+                        if (isPinching && !wasPinching[handIndex]) {
+                            // Pinch just started
+                            pinchStartTime[handIndex] = currentTime;
+                            isDrawingMode[handIndex] = false;
+                            addSquareToGrid(fingerX, fingerY);
+                        } else if (isPinching && wasPinching[handIndex]) {
+                            // Pinch is being held
+                            const holdDuration = currentTime - pinchStartTime[handIndex];
+                            
+                            if (holdDuration >= HOLD_DURATION && !isDrawingMode[handIndex]) {
+                                // Activate drawing mode after hold duration
+                                isDrawingMode[handIndex] = true;
+                            }
+                            
+                            if (isDrawingMode[handIndex]) {
+                                // In drawing mode: create squares continuously
+                                addSquareToGrid(fingerX, fingerY);
+                            }
+                        } else if (!isPinching && wasPinching[handIndex]) {
+                            // Pinch was released
+                            pinchStartTime[handIndex] = null;
+                            isDrawingMode[handIndex] = false;
+                        }
+
+                        wasPinching[handIndex] = isPinching;
+                    }
+
+                        // Calculate loading progress for visual feedback
+                        let showLoading = false;
+                        let loadingProgress = 0;
+                        
+                        // Show loading indicator for pinch hold (before drawing mode activates)
+                        if (isPinching && pinchStartTime[handIndex] && !isDrawingMode[handIndex]) {
+                        const elapsed = currentTime - pinchStartTime[handIndex];
+                        if (elapsed < HOLD_DURATION) {
+                            showLoading = true;
+                            loadingProgress = elapsed / HOLD_DURATION;
+                        }
+                    }
+
+                        interactions.push({
+                            x: fingerX,
+                            y: fingerY,
+                            showLoading: showLoading,
+                            loadingProgress: loadingProgress,
+                            isDeletion: false
+                        });
+                    });
+                }
+
+                smoothedHands = smoothedHands.slice(0, results.multiHandLandmarks.length);
+            } else {
+                smoothedHands = [];
+                wasPinching = [false, false];
+                pinchStartTime = [null, null];
+                isDrawingMode = [false, false];
+                lastFistCenter = [null, null];
+                smoothedFistCenter = [null, null];
+                fistMoveResidual = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+                deleteComboStartTime = null;
+                deleteComboTriggered = false;
+                deleteModeActive = false;
+                setStatus('Show one or two hands to start interaction');
+            }
+            renderLiquify(interactions);
+        }
+
+        // Initialize MediaPipe Hands
+        const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.8,
+            minTrackingConfidence: 0.8
+        });
+        hands.onResults(onResults);
+        
+        // Initialize camera
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                bioCanvas.width = videoElement.videoWidth;
+                bioCanvas.height = videoElement.videoHeight;
+                try {
+                    await hands.send({image: videoElement});
+                } catch (err) {
+                    setStatus(`Tracking error: ${err.message}`, '#ff5c5c');
+                }
+            },
+            width: 1280,
+            height: 720
+        });
+
+        // Event listeners
+        window.addEventListener('resize', initMesh);
+        toggleGridBtn.addEventListener('click', () => {
+            showGrid = !showGrid;
+            updateGridButtonLabel();
+            if (!showGrid) lqCtx.clearRect(0, 0, liquifyCanvas.width, liquifyCanvas.height);
+        });
+        clearSquaresBtn.addEventListener('click', () => {
+            gridSquares = [];
+            setStatus('Tutti i quadrati sono stati cancellati', '#00ff00');
+        });
+
+        // Initialize application
+        initMesh();
+        updateGridButtonLabel();
+
+        // Start camera with proper error handling
+        (async () => {
+            if (!window.isSecureContext) {
+                setStatus('Camera blocked: open via localhost or HTTPS', '#ff5c5c');
+                return;
+            }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                setStatus('Camera API not supported in this browser', '#ff5c5c');
+                return;
+            }
+
+            try {
+                await camera.start();
+                setStatus('Camera started');
+            } catch (err) {
+                setStatus(`Camera error: ${err.message}`, '#ff5c5c');
+            }
+        })();
+    </script>
+</body>
+</html>
