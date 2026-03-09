@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MotionGrid Architect | Home</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #07141f;
+            --bg-mid: #0f2434;
+            --bg-light: #1f3e57;
+            --accent: #00d6b8;
+            --accent-strong: #ff8a3d;
+            --text-main: #f3f8fb;
+            --text-muted: #c7d6e1;
+            --panel: rgba(8, 20, 32, 0.78);
+            --ring: rgba(0, 214, 184, 0.5);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text-main);
+            font-family: "Space Grotesk", sans-serif;
+            background:
+                radial-gradient(circle at 10% 15%, #1a4d66 0%, transparent 28%),
+                radial-gradient(circle at 85% 20%, #295567 0%, transparent 35%),
+                linear-gradient(130deg, var(--bg-dark), var(--bg-mid) 48%, var(--bg-light));
+            display: grid;
+            place-items: center;
+            overflow-x: hidden;
+        }
+
+        body::before,
+        body::after {
+            content: "";
+            position: fixed;
+            inset: auto;
+            width: 280px;
+            height: 280px;
+            border: 1px solid var(--ring);
+            transform: rotate(25deg);
+            pointer-events: none;
+            animation: drift 12s ease-in-out infinite alternate;
+        }
+
+        body::before {
+            top: -60px;
+            right: -70px;
+        }
+
+        body::after {
+            bottom: -90px;
+            left: -90px;
+            animation-delay: 1.5s;
+        }
+
+        .shell {
+            width: min(1024px, 94vw);
+            margin: 32px auto;
+            border: 1px solid rgba(199, 214, 225, 0.22);
+            background: var(--panel);
+            backdrop-filter: blur(4px);
+            border-radius: 24px;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+            overflow: hidden;
+            animation: rise 0.9s ease-out;
+        }
+
+        .hero {
+            padding: 40px 34px 28px;
+            border-bottom: 1px solid rgba(199, 214, 225, 0.16);
+        }
+
+        .kicker {
+            display: inline-block;
+            padding: 6px 10px;
+            border: 1px solid rgba(0, 214, 184, 0.65);
+            border-radius: 999px;
+            color: #a8ffe8;
+            font-size: 0.8rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .kicker_link {
+            text-decoration: none;
+            transition: background-color 180ms ease, color 180ms ease;
+        }
+
+        .kicker_link:hover {
+            background: rgba(0, 214, 184, 0.12);
+            color: #d8fff6;
+        }
+
+        h1 {
+            margin: 14px 0 0;
+            line-height: 0.95;
+            font-family: "Bebas Neue", sans-serif;
+            font-size: clamp(2.4rem, 8vw, 5.2rem);
+            letter-spacing: 0.03em;
+        }
+
+        .subtitle {
+            margin-top: 14px;
+            max-width: 64ch;
+            color: var(--text-muted);
+            line-height: 1.6;
+            font-size: 1.03rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 14px;
+            padding: 22px 34px 34px;
+        }
+
+        .card {
+            background: rgba(12, 32, 46, 0.75);
+            border: 1px solid rgba(199, 214, 225, 0.17);
+            border-radius: 16px;
+            padding: 18px;
+            transition: transform 220ms ease, border-color 220ms ease;
+            animation: reveal 0.75s ease both;
+        }
+
+        .card:nth-child(2) {
+            animation-delay: 0.1s;
+        }
+
+        .card:nth-child(3) {
+            animation-delay: 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(255, 138, 61, 0.75);
+        }
+
+        .card h2 {
+            margin: 0 0 8px;
+            font-size: 1.1rem;
+        }
+
+        .card p {
+            margin: 0;
+            color: var(--text-muted);
+            line-height: 1.55;
+        }
+
+        .gestures {
+            margin: 0 34px 26px;
+            padding: 18px;
+            border-radius: 16px;
+            border: 1px solid rgba(0, 214, 184, 0.28);
+            background: rgba(7, 29, 40, 0.7);
+        }
+
+        .gestures h2 {
+            margin: 0;
+            font-size: 1.35rem;
+            color: #b9ffef;
+        }
+
+        .gestures_intro {
+            margin: 8px 0 14px;
+            color: var(--text-muted);
+            line-height: 1.6;
+        }
+
+        .gesture_grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .gesture_item {
+            border: 1px solid rgba(199, 214, 225, 0.2);
+            border-radius: 12px;
+            background: rgba(13, 35, 50, 0.75);
+            padding: 14px;
+        }
+
+        .gesture_item strong {
+            display: block;
+            font-size: 0.96rem;
+            color: #ffffff;
+            letter-spacing: 0.01em;
+        }
+
+        .gesture_item span {
+            display: block;
+            margin-top: 6px;
+            color: var(--text-muted);
+            line-height: 1.5;
+            font-size: 0.94rem;
+        }
+
+        .cta {
+            padding: 0 34px 36px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        .start {
+            text-decoration: none;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            color: #082029;
+            background: linear-gradient(110deg, #6df8e0, var(--accent));
+            border: 0;
+            border-radius: 12px;
+            padding: 12px 20px;
+            box-shadow: 0 6px 18px rgba(0, 214, 184, 0.32);
+            transition: transform 180ms ease, box-shadow 180ms ease;
+        }
+
+        .start:hover {
+            transform: translateY(-2px) scale(1.01);
+            box-shadow: 0 10px 22px rgba(0, 214, 184, 0.4);
+        }
+
+        .hint {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        @keyframes rise {
+            from {
+                transform: translateY(14px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes reveal {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes drift {
+            from {
+                transform: rotate(25deg) translateY(0px);
+            }
+            to {
+                transform: rotate(25deg) translateY(14px);
+            }
+        }
+
+        @media (max-width: 900px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .gesture_grid {
+                grid-template-columns: 1fr;
+            }
+
+            .hero,
+            .grid,
+            .cta,
+            .gestures {
+                padding-left: 20px;
+                padding-right: 20px;
+            }
+
+            .gestures {
+                margin-left: 20px;
+                margin-right: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <a class="kicker kicker_link" href="https://github.com/gabbisceglie" target="_blank" rel="noopener noreferrer">GitHub Dev: gabbisceglie</a>
+            <h1>MotionGrid Architect</h1>
+            <p class="subtitle">
+                An interactive surface where your hand controls a dynamic grid in real time.
+                Use your webcam, create shapes with gestures, and explore a cyber-style visual experience.
+            </p>
+        </section>
+
+        <section class="grid">
+            <article class="card">
+                <h2>Gesture control</h2>
+                <p>Pinch and fist let you add, drag, and erase grid elements without using a keyboard.</p>
+            </article>
+            <article class="card">
+                <h2>Visual feedback</h2>
+                <p>Glow effects, mesh overlays, and indicators make every interaction clear even during fast motion.</p>
+            </article>
+            <article class="card">
+                <h2>Ready to use</h2>
+                <p>Open the app and allow webcam access to start your interactive session immediately.</p>
+            </article>
+        </section>
+
+        <section class="gestures" aria-label="Gestures to control the program">
+            <h2>Control gestures</h2>
+            <p class="gestures_intro">These are the main movements you can use in front of the webcam to control MotionGrid Architect.</p>
+
+            <div class="gesture_grid">
+                <article class="gesture_item">
+                    <strong>Pinch (thumb + index)</strong>
+                    <span>Instantly adds a square in the grid cell under your index finger.</span>
+                </article>
+
+                <article class="gesture_item">
+                    <strong>Hold pinch (about 1 second)</strong>
+                    <span>Enables continuous drawing: while moving your hand in pinch, you add squares along the path.</span>
+                </article>
+
+                <article class="gesture_item">
+                    <strong>Fist</strong>
+                    <span>Moves all previously created squares together in grid-step motion.</span>
+                </article>
+
+                <article class="gesture_item">
+                    <strong>Two-hand erase combo</strong>
+                    <span>Keep one hand in fist and the other in pinch for about 1.2 seconds, then pass the pinch over any square to remove it.</span>
+                </article>
+            </div>
+        </section>
+
+        <section class="cta">
+            <a class="start" href="prog.html">Enter the program</a>
+            <span class="hint">Tip: use a well-lit environment for more stable tracking.</span>
+        </section>
+    </main>
+</body>
+</html>
