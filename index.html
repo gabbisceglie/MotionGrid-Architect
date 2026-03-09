@@ -10,8 +10,17 @@
         #input_video { position: absolute; width: 100vw; height: 100vh; object-fit: cover; transform: scaleX(-1); z-index: 1; }
         #liquify_canvas { position: absolute; top: 0; left: 0; z-index: 5; pointer-events: none; }
         #bio_canvas { position: absolute; width: 100vw; height: 100vh; z-index: 10; transform: scaleX(-1); pointer-events: none; }
-        #ui { 
-            position: absolute; top: 20px; left: 20px; z-index: 100;
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            pointer-events: none;
+        }
+        #ui {
             color: #00f0ff; font-weight: bold; font-size: 14px;
             text-shadow: 0 0 10px #00f0ff; border-left: 3px solid #00f0ff; padding-left: 15px;
             background: rgba(0,0,0,0.7); padding: 15px; pointer-events: auto;
@@ -63,13 +72,15 @@
     </style>
 </head>
 <body>
-    <div id="ui">
-        <div>MotionGrid Architect v1.2</div>
-        <div>INFO: <span id="status" style="color:#00ff00">Waiting for camera...</span></div>
-        <div>Status: <span id="dev_info" style="color:#ff00ff">Ready</span></div>
-        <div>Discord Dev Info: <span id="dev_info2" style="color:#00ff00">"portgabriel_"</span><button class="copy_btn" onclick="copyDiscordNick()"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="4" width="8" height="8"/><rect x="5" y="1" width="8" height="8"/></svg></button></div>
-        <button id="toggle_grid" type="button">Nascondi griglia</button>
-        <button id="clear_squares" type="button">Cancella quadrati</button>
+    <div id="hud">
+        <div id="ui">
+            <div>MotionGrid Architect v1.2</div>
+            <div>INFO: <span id="status" style="color:#00ff00">Waiting for camera...</span></div>
+            <div>Status: <span id="dev_info" style="color:#ff00ff">Ready</span></div>
+            <div>Discord Dev Info: <span id="dev_info2" style="color:#00ff00">"portgabriel_"</span><button class="copy_btn" onclick="copyDiscordNick()"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1" y="4" width="8" height="8"/><rect x="5" y="1" width="8" height="8"/></svg></button></div>
+            <button id="toggle_grid" type="button">Nascondi griglia</button>
+            <button id="clear_squares" type="button">Cancella quadrati</button>
+        </div>
     </div>
 
     <video id="input_video" autoplay playsinline></video>
@@ -82,9 +93,9 @@
     <script>
         const videoElement = document.getElementById('input_video');
         const bioCanvas = document.getElementById('bio_canvas');
-        const bioCtx = bioCanvas.getContext('2d');
+        const bioCtx = bioCanvas.getContext('2d', { desynchronized: true }) || bioCanvas.getContext('2d');
         const liquifyCanvas = document.getElementById('liquify_canvas');
-        const lqCtx = liquifyCanvas.getContext('2d');
+        const lqCtx = liquifyCanvas.getContext('2d', { desynchronized: true }) || liquifyCanvas.getContext('2d');
         const statusEl = document.getElementById('status');
         const toggleGridBtn = document.getElementById('toggle_grid');
         const clearSquaresBtn = document.getElementById('clear_squares');
@@ -93,13 +104,38 @@
         const rows = 15, cols = 22;
         let meshPoints = [];
         let showGrid = true;
+        let gridSpacingX = 1;
+        let gridSpacingY = 1;
+
+        // Runtime quality profile tuned for lower-end machines.
+        const lowPerfDevice = (() => {
+            const cores = navigator.hardwareConcurrency || 4;
+            const ram = navigator.deviceMemory || 8;
+            const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            return prefersReducedMotion || cores <= 4 || ram <= 4;
+        })();
+
+        const quality = {
+            particleSpawnChance: lowPerfDevice ? 0.008 : 0.03,
+            maxParticles: lowPerfDevice ? 120 : 320,
+            heavyVisuals: !lowPerfDevice,
+            meshSpring: lowPerfDevice ? 0.1 : 0.12,
+            meshDamping: lowPerfDevice ? 0.86 : 0.82,
+            smoothFactor: lowPerfDevice ? 0.55 : 0.45,
+            modelComplexity: lowPerfDevice ? 0 : 1,
+            targetWidth: lowPerfDevice ? 960 : 1280,
+            targetHeight: lowPerfDevice ? 540 : 720,
+            trackingFps: lowPerfDevice ? 24 : 30,
+            modeLabel: lowPerfDevice ? 'LOW' : 'AUTO'
+        };
 
         // Hand tracking state
         let smoothedHands = [];
-        const SMOOTH_FACTOR = 0.45;
+        const SMOOTH_FACTOR = quality.smoothFactor;
         
         // Grid squares management
         let gridSquares = [];
+        const gridSquareKeys = new Set();
         
         // Particle system
         let particles = [];
@@ -163,12 +199,16 @@
         
         // Mesh physics constants
         const MESH_SPRING_STRENGTH = 0.12;
-        const MESH_DAMPING = 0.82;
+        const MESH_DAMPING = quality.meshDamping;
         
         // Rendering constants
         const BASE_GRID_OPACITY = 0.22;
         const MAX_GRID_OPACITY = 0.9;
         const GLITCH_MULTIPLIER = 0.04;
+
+        let handSendInFlight = false;
+        let lastTrackingTs = 0;
+        let trackingIntervalMs = Math.round(1000 / quality.trackingFps);
 
         /**
          * Update status message in UI
@@ -211,20 +251,24 @@
             meshPoints = [];
             liquifyCanvas.width = window.innerWidth;
             liquifyCanvas.height = window.innerHeight;
-            const spacingX = liquifyCanvas.width / cols;
-            const spacingY = liquifyCanvas.height / rows;
+            gridSpacingX = liquifyCanvas.width / cols;
+            gridSpacingY = liquifyCanvas.height / rows;
             for (let y = 0; y <= rows; y++) {
                 for (let x = 0; x <= cols; x++) {
                     meshPoints.push({ 
-                        x: x * spacingX, 
-                        y: y * spacingY, 
-                        origX: x * spacingX, 
-                        origY: y * spacingY, 
+                        x: x * gridSpacingX,
+                        y: y * gridSpacingY,
+                        origX: x * gridSpacingX,
+                        origY: y * gridSpacingY,
                         vx: 0, 
                         vy: 0 
                     });
                 }
             }
+        }
+
+        function getCellKey(row, col) {
+            return `${row}:${col}`;
         }
 
         /**
@@ -259,10 +303,8 @@
          * Convert screen coordinates to grid cell
          */
         function getGridCell(x, y) {
-            const spacingX = liquifyCanvas.width / cols;
-            const spacingY = liquifyCanvas.height / rows;
-            const col = Math.floor(x / spacingX);
-            const row = Math.floor(y / spacingY);
+            const col = Math.floor(x / gridSpacingX);
+            const row = Math.floor(y / gridSpacingY);
             return { 
                 row: Math.max(0, Math.min(rows - 1, row)), 
                 col: Math.max(0, Math.min(cols - 1, col)) 
@@ -274,8 +316,9 @@
          */
         function addSquareToGrid(x, y) {
             const cell = getGridCell(x, y);
-            const exists = gridSquares.some(sq => sq.row === cell.row && sq.col === cell.col);
-            if (!exists) {
+            const key = getCellKey(cell.row, cell.col);
+            if (!gridSquareKeys.has(key)) {
+                gridSquareKeys.add(key);
                 gridSquares.push(cell);
             }
         }
@@ -285,72 +328,94 @@
          */
         function removeSquareFromGrid(x, y) {
             const cell = getGridCell(x, y);
-            gridSquares = gridSquares.filter(sq => !(sq.row === cell.row && sq.col === cell.col));
+            const key = getCellKey(cell.row, cell.col);
+            if (!gridSquareKeys.has(key)) return;
+
+            gridSquareKeys.delete(key);
+            for (let i = 0; i < gridSquares.length; i++) {
+                const sq = gridSquares[i];
+                if (sq.row === cell.row && sq.col === cell.col) {
+                    gridSquares.splice(i, 1);
+                    break;
+                }
+            }
         }
 
         /**
          * Render all active grid squares with glow effect
          */
         function drawGridSquares() {
-            const spacingX = liquifyCanvas.width / cols;
-            const spacingY = liquifyCanvas.height / rows;
-            const time = Date.now() * 0.001;
+            const time = performance.now() * 0.001;
+            const squareScale = 1.08;
+            const drawW = gridSpacingX * squareScale;
+            const drawH = gridSpacingY * squareScale;
+            const offsetX = (drawW - gridSpacingX) * 0.5;
+            const offsetY = (drawH - gridSpacingY) * 0.5;
             
-            gridSquares.forEach((sq, idx) => {
-                const x = sq.col * spacingX;
-                const y = sq.row * spacingY;
+            for (let idx = 0; idx < gridSquares.length; idx++) {
+                const sq = gridSquares[idx];
+                const x = sq.col * gridSpacingX;
+                const y = sq.row * gridSpacingY;
+                const drawX = x - offsetX;
+                const drawY = y - offsetY;
                 
                 // Animated glow with wave effect
                 const wave = Math.sin(time * 2 + idx * 0.3) * 0.5 + 0.5;
-                const glowIntensity = 15 + wave * 10;
+                const glowIntensity = quality.heavyVisuals ? 15 + wave * 10 : 6;
                 
                 // Outer glow
                 lqCtx.save();
-                lqCtx.shadowBlur = glowIntensity * 2;
+                lqCtx.shadowBlur = quality.heavyVisuals ? glowIntensity * 2 : 0;
                 lqCtx.shadowColor = '#00f0ff';
                 lqCtx.fillStyle = `rgba(0, 240, 255, ${0.15 + wave * 0.1})`;
-                lqCtx.fillRect(x, y, spacingX, spacingY);
+                lqCtx.fillRect(drawX, drawY, drawW, drawH);
                 lqCtx.restore();
                 
                 // Border with gradient
                 lqCtx.save();
-                const gradient = lqCtx.createLinearGradient(x, y, x + spacingX, y + spacingY);
-                gradient.addColorStop(0, `rgba(0, 240, 255, ${0.6 + wave * 0.3})`);
-                gradient.addColorStop(0.5, `rgba(0, 212, 255, ${0.8 + wave * 0.2})`);
-                gradient.addColorStop(1, `rgba(0, 240, 255, ${0.6 + wave * 0.3})`);
-                lqCtx.strokeStyle = gradient;
-                lqCtx.lineWidth = 2.5;
-                lqCtx.shadowBlur = glowIntensity;
+                if (quality.heavyVisuals) {
+                    const gradient = lqCtx.createLinearGradient(x, y, x + gridSpacingX, y + gridSpacingY);
+                    gradient.addColorStop(0, `rgba(0, 240, 255, ${0.6 + wave * 0.3})`);
+                    gradient.addColorStop(0.5, `rgba(0, 212, 255, ${0.8 + wave * 0.2})`);
+                    gradient.addColorStop(1, `rgba(0, 240, 255, ${0.6 + wave * 0.3})`);
+                    lqCtx.strokeStyle = gradient;
+                } else {
+                    lqCtx.strokeStyle = `rgba(0, 230, 255, ${0.55 + wave * 0.2})`;
+                }
+                lqCtx.lineWidth = quality.heavyVisuals ? 2.5 : 1.4;
+                lqCtx.shadowBlur = quality.heavyVisuals ? glowIntensity : 0;
                 lqCtx.shadowColor = '#00f0ff';
-                lqCtx.strokeRect(x, y, spacingX, spacingY);
+                lqCtx.strokeRect(drawX, drawY, drawW, drawH);
                 lqCtx.restore();
                 
-                // Corner highlights
-                lqCtx.save();
-                lqCtx.fillStyle = `rgba(0, 255, 255, ${0.6 + wave * 0.4})`;
-                lqCtx.shadowBlur = 8;
-                lqCtx.shadowColor = '#00ffff';
-                const cornerSize = 4;
-                lqCtx.fillRect(x - 1, y - 1, cornerSize, cornerSize);
-                lqCtx.fillRect(x + spacingX - cornerSize + 1, y - 1, cornerSize, cornerSize);
-                lqCtx.fillRect(x - 1, y + spacingY - cornerSize + 1, cornerSize, cornerSize);
-                lqCtx.fillRect(x + spacingX - cornerSize + 1, y + spacingY - cornerSize + 1, cornerSize, cornerSize);
-                lqCtx.restore();
+                if (quality.heavyVisuals) {
+                    // Corner highlights
+                    lqCtx.save();
+                    lqCtx.fillStyle = `rgba(0, 255, 255, ${0.6 + wave * 0.4})`;
+                    lqCtx.shadowBlur = 8;
+                    lqCtx.shadowColor = '#00ffff';
+                    const cornerSize = 4;
+                    lqCtx.fillRect(drawX - 1, drawY - 1, cornerSize, cornerSize);
+                    lqCtx.fillRect(drawX + drawW - cornerSize + 1, drawY - 1, cornerSize, cornerSize);
+                    lqCtx.fillRect(drawX - 1, drawY + drawH - cornerSize + 1, cornerSize, cornerSize);
+                    lqCtx.fillRect(drawX + drawW - cornerSize + 1, drawY + drawH - cornerSize + 1, cornerSize, cornerSize);
+                    lqCtx.restore();
+                }
                 
                 // Spawn occasional particles on active squares
-                if (Math.random() < 0.03) {
-                    const px = x + spacingX * Math.random();
-                    const py = y + spacingY * Math.random();
+                if (particles.length < quality.maxParticles && Math.random() < quality.particleSpawnChance) {
+                    const px = x + gridSpacingX * Math.random();
+                    const py = y + gridSpacingY * Math.random();
                     particles.push(new Particle(px, py));
                 }
-            });
+            }
         }
 
         function moveAllSquaresBy(deltaX, deltaY, handIndex) {
             if (!gridSquares.length) return;
 
-            const spacingX = liquifyCanvas.width / cols;
-            const spacingY = liquifyCanvas.height / rows;
+            const spacingX = gridSpacingX;
+            const spacingY = gridSpacingY;
             fistMoveResidual[handIndex].x += deltaX;
             fistMoveResidual[handIndex].y += deltaY;
 
@@ -372,13 +437,15 @@
             gridSquares.forEach(sq => {
                 const nextRow = Math.max(0, Math.min(rows - 1, sq.row + deltaRows));
                 const nextCol = Math.max(0, Math.min(cols - 1, sq.col + deltaCols));
-                const key = `${nextRow}:${nextCol}`;
+                const key = getCellKey(nextRow, nextCol);
                 if (!seen.has(key)) {
                     seen.add(key);
                     moved.push({ row: nextRow, col: nextCol });
                 }
             });
 
+            gridSquareKeys.clear();
+            seen.forEach((key) => gridSquareKeys.add(key));
             gridSquares = moved;
         }
 
@@ -389,7 +456,7 @@
             lqCtx.save();
             lqCtx.strokeStyle = color;
             lqCtx.lineWidth = 4;
-            lqCtx.shadowBlur = 15;
+            lqCtx.shadowBlur = quality.heavyVisuals ? 15 : 0;
             lqCtx.shadowColor = shadowColor;
             
             const radius = 30;
@@ -415,12 +482,12 @@
          * Draw hand skeleton with cyber aesthetic
          */
         function drawCyberHand(ctx, pts) {
-            const time = Date.now() * 0.003;
+            const time = performance.now() * 0.003;
             const pulse = Math.sin(time) * 0.5 + 0.5;
             
             // Draw connections with gradient
             ctx.save();
-            ctx.shadowBlur = 18 + pulse * 8;
+            ctx.shadowBlur = quality.heavyVisuals ? 18 + pulse * 8 : 0;
             ctx.shadowColor = "#00f0ff";
             ctx.lineWidth = 2.5;
             ctx.lineCap = 'round';
@@ -437,16 +504,20 @@
             ];
             
             CONNECTIONS.forEach(([a, b]) => {
-                const gradient = ctx.createLinearGradient(
-                    pts[a].x * bioCanvas.width, 
-                    pts[a].y * bioCanvas.height,
-                    pts[b].x * bioCanvas.width, 
-                    pts[b].y * bioCanvas.height
-                );
-                gradient.addColorStop(0, `rgba(0, 240, 255, ${0.6 + pulse * 0.3})`);
-                gradient.addColorStop(0.5, `rgba(0, 255, 255, ${0.8 + pulse * 0.2})`);
-                gradient.addColorStop(1, `rgba(0, 240, 255, ${0.6 + pulse * 0.3})`);
-                ctx.strokeStyle = gradient;
+                if (quality.heavyVisuals) {
+                    const gradient = ctx.createLinearGradient(
+                        pts[a].x * bioCanvas.width,
+                        pts[a].y * bioCanvas.height,
+                        pts[b].x * bioCanvas.width,
+                        pts[b].y * bioCanvas.height
+                    );
+                    gradient.addColorStop(0, `rgba(0, 240, 255, ${0.6 + pulse * 0.3})`);
+                    gradient.addColorStop(0.5, `rgba(0, 255, 255, ${0.8 + pulse * 0.2})`);
+                    gradient.addColorStop(1, `rgba(0, 240, 255, ${0.6 + pulse * 0.3})`);
+                    ctx.strokeStyle = gradient;
+                } else {
+                    ctx.strokeStyle = 'rgba(0, 240, 255, 0.75)';
+                }
                 
                 ctx.beginPath();
                 ctx.moveTo(pts[a].x * bioCanvas.width, pts[a].y * bioCanvas.height);
@@ -455,9 +526,10 @@
             });
             
             // Draw joint points with glow
-            ctx.shadowBlur = 12;
+            ctx.shadowBlur = quality.heavyVisuals ? 12 : 0;
             const fingertips = [4, 8, 12, 16, 20];
-            pts.forEach((pt, idx) => {
+            for (let idx = 0; idx < pts.length; idx++) {
+                const pt = pts[idx];
                 const isFingertip = fingertips.includes(idx);
                 const radius = isFingertip ? 5 : 3;
                 const alpha = isFingertip ? 0.9 : 0.7;
@@ -469,14 +541,14 @@
                 ctx.fill();
                 
                 // Extra glow ring for fingertips
-                if (isFingertip) {
+                if (isFingertip && quality.heavyVisuals) {
                     ctx.strokeStyle = `rgba(0, 255, 255, ${0.3 + pulse * 0.2})`;
                     ctx.lineWidth = 1.5;
                     ctx.beginPath();
                     ctx.arc(pt.x * bioCanvas.width, pt.y * bioCanvas.height, radius + 4, 0, Math.PI * 2);
                     ctx.stroke();
                 }
-            });
+            }
             
             ctx.restore();
         }
@@ -488,7 +560,7 @@
             lqCtx.save();
             const opacity = Math.min(MAX_GRID_OPACITY, BASE_GRID_OPACITY + glitch * GLITCH_MULTIPLIER);
             lqCtx.lineWidth = 1.2;
-            lqCtx.shadowBlur = 12 + glitch * 2;
+            lqCtx.shadowBlur = quality.heavyVisuals ? 12 + glitch * 2 : 0;
 
             // Calculate center lines
             const centerRow = Math.floor(rows / 2);
@@ -547,12 +619,17 @@
         function renderLiquify(interactions) {
             lqCtx.clearRect(0, 0, liquifyCanvas.width, liquifyCanvas.height);
             
-            // Update and draw particles
-            particles = particles.filter(p => !p.isDead());
-            particles.forEach(p => {
+            // Update and draw particles with in-place compaction to reduce GC pressure.
+            let writeIndex = 0;
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
                 p.update();
-                p.draw(lqCtx);
-            });
+                if (!p.isDead()) {
+                    p.draw(lqCtx);
+                    particles[writeIndex++] = p;
+                }
+            }
+            particles.length = writeIndex;
             
             drawGridSquares();
             
@@ -572,8 +649,8 @@
             for (let i = 0; i < meshLength; i++) {
                 const p = meshPoints[i];
                 // Spring force towards original position
-                p.vx += (p.origX - p.x) * MESH_SPRING_STRENGTH;
-                p.vy += (p.origY - p.y) * MESH_SPRING_STRENGTH;
+                p.vx += (p.origX - p.x) * quality.meshSpring;
+                p.vy += (p.origY - p.y) * quality.meshSpring;
                 // Damping
                 p.vx *= MESH_DAMPING;
                 p.vy *= MESH_DAMPING;
@@ -784,25 +861,36 @@
         const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
         hands.setOptions({
             maxNumHands: 2,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.8,
-            minTrackingConfidence: 0.8
+            modelComplexity: quality.modelComplexity,
+            minDetectionConfidence: lowPerfDevice ? 0.7 : 0.8,
+            minTrackingConfidence: lowPerfDevice ? 0.7 : 0.8
         });
         hands.onResults(onResults);
         
         // Initialize camera
         const camera = new Camera(videoElement, {
             onFrame: async () => {
-                bioCanvas.width = videoElement.videoWidth;
-                bioCanvas.height = videoElement.videoHeight;
+                const now = performance.now();
+                if (handSendInFlight) return;
+                if (now - lastTrackingTs < trackingIntervalMs) return;
+
+                if (bioCanvas.width !== videoElement.videoWidth || bioCanvas.height !== videoElement.videoHeight) {
+                    bioCanvas.width = videoElement.videoWidth;
+                    bioCanvas.height = videoElement.videoHeight;
+                }
+
+                handSendInFlight = true;
+                lastTrackingTs = now;
                 try {
                     await hands.send({image: videoElement});
                 } catch (err) {
                     setStatus(`Tracking error: ${err.message}`, '#ff5c5c');
+                } finally {
+                    handSendInFlight = false;
                 }
             },
-            width: 1280,
-            height: 720
+            width: quality.targetWidth,
+            height: quality.targetHeight
         });
 
         // Event listeners
@@ -814,6 +902,7 @@
         });
         clearSquaresBtn.addEventListener('click', () => {
             gridSquares = [];
+            gridSquareKeys.clear();
             setStatus('Tutti i quadrati sono stati cancellati', '#00ff00');
         });
 
@@ -835,7 +924,7 @@
 
             try {
                 await camera.start();
-                setStatus('Camera started');
+                setStatus(`Camera started (${quality.modeLabel} mode)`);
             } catch (err) {
                 setStatus(`Camera error: ${err.message}`, '#ff5c5c');
             }
